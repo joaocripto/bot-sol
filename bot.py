@@ -9,9 +9,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 # ══════════════════════════════════════
 TOKEN = os.environ.get("TELEGRAM_TOKEN") or os.environ.get("TOKEN")
 GRUPO = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("GRUPO")
-ML_CLIENT_ID     = os.environ.get("ML_CLIENT_ID", "6121251068681516")
-ML_CLIENT_SECRET = os.environ.get("ML_CLIENT_SECRET", "gn8O8NXypeBnTqsPoW7ZTpIDU80BVqJJ")
-ML_ACCESS_TOKEN  = None  # será obtido automaticamente
+ML_CLIENT_ID     = "6121251068681516"
+ML_CLIENT_SECRET = "gn8O8NXypeBnTqsPoW7ZTpIDU80BVqJJ"
+ML_ACCESS_TOKEN  = None
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("AchadinhosBot")
