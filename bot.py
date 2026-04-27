@@ -146,11 +146,13 @@ async def link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def auto_ofertas(context: ContextTypes.DEFAULT_TYPE):
     log.info("Buscando ofertas automáticas do ML...")
     categorias = [
-        ("eletrônicos oferta", "⚡"),
-        ("moda feminina promoção", "👗"),
-        ("casa decoração barato", "🏠"),
-        ("calçados promoção", "👟"),
-        ("beleza skincare oferta", "💄"),
+        ("eletronicos oferta", "⚡"),
+        ("moda feminina", "👗"),
+        ("casa decoracao", "🏠"),
+        ("calcados tenis", "👟"),
+        ("beleza skincare", "💄"),
+        ("smartphone barato", "📱"),
+        ("fone ouvido", "🎧"),
     ]
 
     import random
