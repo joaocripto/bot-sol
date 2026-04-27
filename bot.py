@@ -7,8 +7,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 # ══════════════════════════════════════
 # CONFIGURAÇÕES
 # ══════════════════════════════════════
-TOKEN = os.environ.get("TELEGRAM_TOKEN")
-GRUPO = os.environ.get("TELEGRAM_CHAT_ID")
+TOKEN = os.environ.get("TELEGRAM_TOKEN") or os.environ.get("TOKEN")
+GRUPO = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("GRUPO")
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("AchadinhosBot")
