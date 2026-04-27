@@ -9,6 +9,9 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, Con
 # ══════════════════════════════════════
 TOKEN = os.environ.get("TELEGRAM_TOKEN") or os.environ.get("TOKEN")
 GRUPO = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("GRUPO")
+ML_CLIENT_ID     = os.environ.get("ML_CLIENT_ID", "6121251068681516")
+ML_CLIENT_SECRET = os.environ.get("ML_CLIENT_SECRET", "gn8O8NXypeBnTqsPoW7ZTpIDU80BVqJJ")
+ML_ACCESS_TOKEN  = None  # será obtido automaticamente
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("AchadinhosBot")
@@ -179,42 +182,75 @@ async def auto_ofertas(context: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════
+def get_ml_token():
+    """Obtém access token do ML via Client Credentials"""
+    global ML_ACCESS_TOKEN
+    try:
+        r = requests.post(
+            "https://api.mercadolibre.com/oauth/token",
+            data={
+                "grant_type": "client_credentials",
+                "client_id": ML_CLIENT_ID,
+                "client_secret": ML_CLIENT_SECRET,
+            },
+            timeout=10
+        )
+        r.raise_for_status()
+        ML_ACCESS_TOKEN = r.json().get("access_token")
+        log.info("ML token obtido!")
+        return ML_ACCESS_TOKEN
+    except Exception as e:
+        log.error(f"Erro token ML: {e}")
+        return None
+
 def buscar_ml(termo, limite=3):
-    """Busca ofertas no Promobit via RSS — funciona em qualquer servidor"""
-    import re
-    feeds = [
-        "https://www.promobit.com.br/feed/ofertas/rss.xml",
-        "https://www.pelando.com.br/feed",
-    ]
-    produtos = []
-    vistos = set()
-    for feed_url in feeds:
-        try:
-            r = requests.get(feed_url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-            r.raise_for_status()
-            items = re.findall(r'<item>(.*?)</item>', r.text, re.DOTALL)
-            for item in items:
-                titulo_m = re.search(r'<title>(?:<![CDATA[)?(.*?)(?:]]>)?</title>', item)
-                link_m   = re.search(r'<link>(.*?)</link>', item) or re.search(r'<guid>(.*?)</guid>', item)
-                desc_m   = re.search(r'<description>(?:<![CDATA[)?(.*?)(?:]]>)?</description>', item, re.DOTALL)
-                if titulo_m:
-                    nome = re.sub(r'<[^>]+>', '', titulo_m.group(1)).strip()
-                    if nome and nome not in vistos and len(nome) > 5:
-                        vistos.add(nome)
-                        desc = re.sub(r'<[^>]+>', '', desc_m.group(1) if desc_m else '')[:200].strip()
-                        # Tenta extrair preço da descrição
-                        preco_m = re.search(r'R\$\s*([\d.,]+)', desc)
-                        preco = f"R$ {preco_m.group(1)}" if preco_m else "Veja o preço no link!"
-                        produtos.append({
-                            "nome": nome,
-                            "preco": preco,
-                            "link": link_m.group(1).strip() if link_m else feed_url,
-                        })
-                        if len(produtos) >= limite:
-                            return produtos
-        except Exception as e:
-            log.error(f"Erro feed {feed_url}: {e}")
-    return produtos
+    """Busca produtos no ML com autenticação oficial"""
+    global ML_ACCESS_TOKEN
+    token = ML_ACCESS_TOKEN or get_ml_token()
+    if not token:
+        log.error("Sem token ML")
+        return []
+    try:
+        headers = {"Authorization": f"Bearer {token}"}
+        r = requests.get(
+            "https://api.mercadolibre.com/sites/MLB/search",
+            params={"q": termo, "sort": "relevance", "limit": limite * 2, "condition": "new"},
+            headers=headers,
+            timeout=10
+        )
+        # Token expirado — renova e tenta de novo
+        if r.status_code == 401:
+            token = get_ml_token()
+            if not token:
+                return []
+            headers = {"Authorization": f"Bearer {token}"}
+            r = requests.get(
+                "https://api.mercadolibre.com/sites/MLB/search",
+                params={"q": termo, "sort": "relevance", "limit": limite * 2, "condition": "new"},
+                headers=headers,
+                timeout=10
+            )
+        r.raise_for_status()
+        items = r.json().get("results", [])
+        produtos = []
+        for item in items[:limite]:
+            preco_orig  = item.get("original_price")
+            preco_atual = item.get("price", 0)
+            desconto = ""
+            if preco_orig and preco_orig > preco_atual:
+                pct = int((1 - preco_atual / preco_orig) * 100)
+                desconto = f" (-{pct}%)"
+            preco_fmt = f"R$ {preco_atual:,.2f}".replace(",","X").replace(".",",").replace("X",".") + desconto
+            produtos.append({
+                "nome": item.get("title", "Produto"),
+                "preco": preco_fmt,
+                "link": item.get("permalink", ""),
+            })
+        log.info(f"ML: {len(produtos)} produtos encontrados para '{termo}'")
+        return produtos
+    except Exception as e:
+        log.error(f"Erro ML: {e}")
+        return []
 
 def formatar_produto(nome, preco, link, fonte="", emoji="🔥"):
     return (
