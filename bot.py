@@ -1,17 +1,14 @@
 import os
 import logging
-import requests
+import re
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 # ══════════════════════════════════════
 # CONFIGURAÇÕES
 # ══════════════════════════════════════
-TOKEN = os.environ.get("TELEGRAM_TOKEN") or os.environ.get("TOKEN")
-GRUPO = os.environ.get("TELEGRAM_CHAT_ID") or os.environ.get("GRUPO")
-ML_CLIENT_ID     = "6121251068681516"
-ML_CLIENT_SECRET = "gn8O8NXypeBnTqsPoW7ZTpIDU80BVqJJ"
-ML_ACCESS_TOKEN  = None
+TOKEN = os.environ.get("TOKEN")
+GRUPO = os.environ.get("GRUPO")
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("AchadinhosBot")
@@ -23,38 +20,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🛍️ *Bot Achadinhos da Sol ativo!*\n\n"
         "📌 *Como usar:*\n\n"
-        "1️⃣ /achadinho nome - preço - link\n"
-        "_(posta produto formatado no grupo)_\n\n"
-        "2️⃣ Cole um link da Shopee aqui\n"
-        "_(eu formato e posto no grupo)_\n\n"
-        "3️⃣ /buscar palavra\n"
-        "_(busca no Mercado Livre e posta)_\n\n"
-        "🤖 A cada 3h posto ofertas automáticas do ML!",
+        "1️⃣ /produto Nome | Preço | Link\n"
+        "_(ex: /produto Tênis Nike | R$199,90 | shopee.com/xxx)_\n\n"
+        "2️⃣ Cole qualquer link aqui\n"
+        "_(Shopee, ML, Amazon — eu formato e posto!)_\n\n"
+        "3️⃣ /promo texto livre\n"
+        "_(posta uma promoção personalizada)_",
         parse_mode="Markdown"
     )
 
 # ══════════════════════════════════════
-# COMANDO /achadinho — formato manual
+# COMANDO /produto — formato completo
 # ══════════════════════════════════════
-async def achadinho(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def produto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = " ".join(context.args)
-    if not texto:
+    if not texto or "|" not in texto:
         await update.message.reply_text(
-            "⚠️ Use assim:\n`/achadinho Nome - R$XX,XX - link`",
+            "⚠️ Use assim:\n`/produto Nome | Preço | Link`\n\n"
+            "Exemplo:\n`/produto Tênis Nike Air | R$199,90 | https://shopee.com.br/xxx`",
             parse_mode="Markdown"
         )
         return
 
-    partes = texto.split(" - ")
-    if len(partes) >= 3:
-        nome  = partes[0].strip()
-        preco = partes[1].strip()
-        link  = partes[2].strip()
-        msg = formatar_produto(nome, preco, link, "Manual")
-    else:
-        msg = f"🔥 *ACHADINHO DA SOL* 🔥\n\n{texto}"
+    partes = [p.strip() for p in texto.split("|")]
+    nome  = partes[0] if len(partes) > 0 else ""
+    preco = partes[1] if len(partes) > 1 else ""
+    link  = partes[2] if len(partes) > 2 else ""
+    extra = partes[3] if len(partes) > 3 else ""  # info adicional opcional
 
-    # Posta no grupo
+    msg = formatar_produto(nome, preco, link, extra)
+
     try:
         await context.bot.send_message(
             chat_id=GRUPO,
@@ -68,200 +63,118 @@ async def achadinho(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Erro: {e}")
 
 # ══════════════════════════════════════
-# COMANDO /buscar — busca no ML
+# COMANDO /promo — texto livre
 # ══════════════════════════════════════
-async def buscar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    termo = " ".join(context.args)
-    if not termo:
-        await update.message.reply_text("⚠️ Use: `/buscar tênis nike`", parse_mode="Markdown")
+async def promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = " ".join(context.args)
+    if not texto:
+        await update.message.reply_text("⚠️ Use: `/promo seu texto aqui`", parse_mode="Markdown")
         return
 
-    await update.message.reply_text(f"🔍 Buscando *{termo}* no Mercado Livre...", parse_mode="Markdown")
-    produtos = buscar_ml(termo, limite=3)
+    msg = (
+        f"🔥 *ACHADINHO DA SOL* 🔥\n\n"
+        f"{texto}\n\n"
+        f"⚡ _Corre que pode acabar!_"
+    )
 
-    if not produtos:
-        await update.message.reply_text("❌ Nenhum produto encontrado.")
-        return
-
-    for p in produtos:
-        msg = formatar_produto(p["nome"], p["preco"], p["link"], "Mercado Livre")
-        try:
-            await context.bot.send_message(
-                chat_id=GRUPO,
-                text=msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=False
-            )
-        except Exception as e:
-            log.error(f"Erro ao postar produto: {e}")
-
-    await update.message.reply_text(f"✅ {len(produtos)} produtos postados no grupo!")
+    try:
+        await context.bot.send_message(
+            chat_id=GRUPO,
+            text=msg,
+            parse_mode="Markdown"
+        )
+        await update.message.reply_text("✅ Postado no grupo!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Erro: {e}")
 
 # ══════════════════════════════════════
-# LINK AUTOMÁTICO — detecta Shopee/ML
+# LINK AUTOMÁTICO — detecta loja pelo link
 # ══════════════════════════════════════
 async def link_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text or ""
-
-    if "shopee.com.br" in texto or "shope.ee" in texto:
-        await update.message.reply_text("🛍️ Link da Shopee detectado! Formatando...")
-        msg = (
-            f"🔥 *ACHADINHO DA SOL* 🔥\n\n"
-            f"🛍️ *Produto Shopee*\n"
-            f"💰 *Veja o preço no link!*\n"
-            f"🔗 {texto.strip()}\n\n"
-            f"⚡ Corre que pode acabar!\n"
-            f"👆 Clique no link e aproveite!"
-        )
-        try:
-            await context.bot.send_message(
-                chat_id=GRUPO,
-                text=msg,
-                parse_mode="Markdown"
-            )
-            await update.message.reply_text("✅ Postado no grupo!")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Erro: {e}")
-
-    elif "mercadolivre.com.br" in texto or "mercadolibre.com" in texto:
-        await update.message.reply_text("🛒 Link do ML detectado! Formatando...")
-        msg = (
-            f"🔥 *ACHADINHO DA SOL* 🔥\n\n"
-            f"🛒 *Produto Mercado Livre*\n"
-            f"💰 *Veja o preço no link!*\n"
-            f"🔗 {texto.strip()}\n\n"
-            f"⚡ Corre que pode acabar!\n"
-            f"👆 Clique no link e aproveite!"
-        )
-        try:
-            await context.bot.send_message(
-                chat_id=GRUPO,
-                text=msg,
-                parse_mode="Markdown"
-            )
-            await update.message.reply_text("✅ Postado no grupo!")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Erro: {e}")
-
-# ══════════════════════════════════════
-# AUTO POST — Mercado Livre a cada 3h
-# ══════════════════════════════════════
-async def auto_ofertas(context: ContextTypes.DEFAULT_TYPE):
-    log.info("Buscando ofertas automáticas do ML...")
-    categorias = [
-        ("eletronicos oferta", "⚡"),
-        ("moda feminina", "👗"),
-        ("casa decoracao", "🏠"),
-        ("calcados tenis", "👟"),
-        ("beleza skincare", "💄"),
-        ("smartphone barato", "📱"),
-        ("fone ouvido", "🎧"),
-    ]
-
-    import random
-    termo, emoji = random.choice(categorias)
-    produtos = buscar_ml(termo, limite=2)
-
-    if not produtos:
-        log.warning("Sem produtos ML")
+    link  = extrair_link(texto)
+    if not link:
         return
 
-    for p in produtos:
-        msg = formatar_produto(p["nome"], p["preco"], p["link"], "Mercado Livre", emoji)
-        try:
-            await context.bot.send_message(
-                chat_id=GRUPO,
-                text=msg,
-                parse_mode="Markdown",
-                disable_web_page_preview=False
-            )
-            log.info(f"Produto postado: {p['nome'][:50]}")
-        except Exception as e:
-            log.error(f"Erro auto post: {e}")
+    loja = detectar_loja(link)
+    emoji_loja = {
+        "Shopee": "🛍️",
+        "Mercado Livre": "🛒",
+        "Amazon": "📦",
+        "Americanas": "🛍️",
+        "Magazine Luiza": "🏪",
+        "Casas Bahia": "🏠",
+    }.get(loja, "🔗")
+
+    msg = (
+        f"🔥 *ACHADINHO DA SOL* 🔥\n\n"
+        f"{emoji_loja} *Produto {loja}*\n\n"
+        f"💰 *Veja o preço no link abaixo!*\n"
+        f"🔗 {link}\n\n"
+        f"⚡ _Corre que pode acabar!_\n"
+        f"👆 _Clique no link e aproveite!_"
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=GRUPO,
+            text=msg,
+            parse_mode="Markdown",
+            disable_web_page_preview=False
+        )
+        await update.message.reply_text(f"✅ Link da {loja} postado no grupo!")
+    except Exception as e:
+        log.error(f"Erro link: {e}")
+        await update.message.reply_text(f"❌ Erro: {e}")
 
 # ══════════════════════════════════════
 # HELPERS
 # ══════════════════════════════════════
-def get_ml_token():
-    """Obtém access token do ML via Client Credentials"""
-    global ML_ACCESS_TOKEN
-    try:
-        r = requests.post(
-            "https://api.mercadolibre.com/oauth/token",
-            data={
-                "grant_type": "client_credentials",
-                "client_id": ML_CLIENT_ID,
-                "client_secret": ML_CLIENT_SECRET,
-            },
-            timeout=10
-        )
-        r.raise_for_status()
-        ML_ACCESS_TOKEN = r.json().get("access_token")
-        log.info("ML token obtido!")
-        return ML_ACCESS_TOKEN
-    except Exception as e:
-        log.error(f"Erro token ML: {e}")
-        return None
+def formatar_produto(nome, preco, link, extra=""):
+    # Detecta se tem desconto no preço (ex: "R$199 de R$399")
+    desconto = ""
+    if "de r$" in preco.lower() or "por r$" in preco.lower():
+        partes = re.split(r'(?i)(de r\$|por r\$)', preco)
+        preco_atual = partes[0].strip()
+        preco_orig  = partes[-1].strip() if len(partes) > 1 else ""
+        if preco_orig:
+            desconto = f"\n~~{preco_orig}~~"
+        preco = preco_atual
 
-def buscar_ml(termo, limite=3):
-    """Busca produtos no ML com autenticação oficial"""
-    global ML_ACCESS_TOKEN
-    token = ML_ACCESS_TOKEN or get_ml_token()
-    if not token:
-        log.error("Sem token ML")
-        return []
-    try:
-        headers = {"Authorization": f"Bearer {token}"}
-        r = requests.get(
-            "https://api.mercadolibre.com/sites/MLB/search",
-            params={"q": termo, "sort": "relevance", "limit": limite * 2, "condition": "new"},
-            headers=headers,
-            timeout=10
-        )
-        # Token expirado — renova e tenta de novo
-        if r.status_code == 401:
-            token = get_ml_token()
-            if not token:
-                return []
-            headers = {"Authorization": f"Bearer {token}"}
-            r = requests.get(
-                "https://api.mercadolibre.com/sites/MLB/search",
-                params={"q": termo, "sort": "relevance", "limit": limite * 2, "condition": "new"},
-                headers=headers,
-                timeout=10
-            )
-        r.raise_for_status()
-        items = r.json().get("results", [])
-        produtos = []
-        for item in items[:limite]:
-            preco_orig  = item.get("original_price")
-            preco_atual = item.get("price", 0)
-            desconto = ""
-            if preco_orig and preco_orig > preco_atual:
-                pct = int((1 - preco_atual / preco_orig) * 100)
-                desconto = f" (-{pct}%)"
-            preco_fmt = f"R$ {preco_atual:,.2f}".replace(",","X").replace(".",",").replace("X",".") + desconto
-            produtos.append({
-                "nome": item.get("title", "Produto"),
-                "preco": preco_fmt,
-                "link": item.get("permalink", ""),
-            })
-        log.info(f"ML: {len(produtos)} produtos encontrados para '{termo}'")
-        return produtos
-    except Exception as e:
-        log.error(f"Erro ML: {e}")
-        return []
+    extra_txt = f"\n\nℹ️ _{extra}_" if extra else ""
 
-def formatar_produto(nome, preco, link, fonte="", emoji="🔥"):
     return (
-        f"{emoji} *ACHADINHO DA SOL* {emoji}\n\n"
-        f"🛍️ *{nome}*\n"
-        f"💰 *{preco}*\n"
-        f"🔗 {link}\n\n"
-        f"⚡ Corre que pode acabar!\n"
-        f"👆 Clique no link e aproveite!\n\n"
-        f"_via {fonte}_"
+        f"🔥 *ACHADINHO DA SOL* 🔥\n\n"
+        f"🛍️ *{nome}*\n\n"
+        f"💰 *{preco}*{desconto}\n"
+        f"🔗 {link}"
+        f"{extra_txt}\n\n"
+        f"⚡ _Corre que pode acabar!_\n"
+        f"👆 _Clique no link e aproveite!_"
     )
+
+def extrair_link(texto):
+    match = re.search(r'https?://\S+', texto)
+    return match.group(0) if match else None
+
+def detectar_loja(link):
+    lojas = {
+        "shopee": "Shopee",
+        "shope.ee": "Shopee",
+        "mercadolivre": "Mercado Livre",
+        "mercadolibre": "Mercado Livre",
+        "amazon": "Amazon",
+        "amzn": "Amazon",
+        "americanas": "Americanas",
+        "magazineluiza": "Magazine Luiza",
+        "magalu": "Magazine Luiza",
+        "casasbahia": "Casas Bahia",
+    }
+    link_lower = link.lower()
+    for chave, nome in lojas.items():
+        if chave in link_lower:
+            return nome
+    return "Loja"
 
 # ══════════════════════════════════════
 # MAIN
@@ -270,17 +183,13 @@ def main():
     log.info("Achadinhos da Sol Bot iniciando...")
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Handlers
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("achadinho", achadinho))
-    app.add_handler(CommandHandler("buscar", buscar))
+    app.add_handler(CommandHandler("produto", produto))
+    app.add_handler(CommandHandler("promo", promo))
     app.add_handler(MessageHandler(
-        filters.TEXT & filters.Regex(r'(shopee|mercadolivre|shope\.ee|mercadolibre)'),
+        filters.TEXT & filters.Regex(r'https?://'),
         link_handler
     ))
-
-    # Auto post a cada 3h
-    app.job_queue.run_repeating(auto_ofertas, interval=10800, first=30)
 
     log.info("Bot rodando!")
     app.run_polling(drop_pending_updates=True, allowed_updates=["message"])
